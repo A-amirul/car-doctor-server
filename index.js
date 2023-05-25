@@ -2,6 +2,7 @@ const express = require('express');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 require('dotenv').config();
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const app = express();
 const port = process.env.PORT || 5000;
 
@@ -9,7 +10,7 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-console.log(process.env.DB_PASS);
+// console.log(process.env.DB_PASS);
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.iutwb2x.mongodb.net/?retryWrites=true&w=majority`;
 
@@ -22,6 +23,23 @@ const client = new MongoClient(uri, {
 	}
 });
 
+const verifyJWT = (req,res,next) => {
+	const authorization = req.headers.authorization;
+	if (!authorization) {
+		return res.status(401).send({error:true, message:'unauthorized access'})
+	}
+
+	const token = authorization.split(' ')[1];
+	console.log('token inside verify jwt');
+	jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (error, decoded) => {
+		if (error) {
+			return res.status(401).send({error:true, message:'unauthorized access'})
+		}
+		req.decoded = decoded;
+		next();
+	})
+}
+
 async function run() {
 	try {
 		// Connect the client to the server	(optional starting in v4.7)
@@ -30,6 +48,17 @@ async function run() {
 		const serviceCollection = client.db('carDoctor').collection('services');
 		const bookingCollection = client.db('carDoctor').collection('bookings');
 
+		// jwt routes
+		app.post('/jwt', (req, res) => {
+			const user = req.body;
+			console.log(user);
+
+			const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1h' })
+			console.log(token);
+			res.send({token});
+		})
+
+		// services route
 		app.get('/services', async(req, res) => {
 			const cursor = serviceCollection.find();
 			const result = await cursor.toArray();
@@ -47,14 +76,18 @@ async function run() {
 			res.send(result);
 		})
 
-		// bookings
-		app.get('/bookings', async (req, res) => {
-			console.log(req.query.email);
+		// bookings routes
+		app.get('/bookings', verifyJWT, async (req, res) => {
+			const decoded = req.decoded;
+			console.log('came back after verify', decoded);
+			if (decoded.email !== req.query.email) {
+				return res.status(403).send({error:1, message:'forbidden access'})
+			}
 			let query = {};
 			if (req.query?.email) {
 				query={email:req.query.email}
 			}
-			const result = await bookingCollection.find().toArray();
+			const result = await bookingCollection.find(query).toArray();
 			res.send(result);
 		})
 		app.post('/bookings', async (req, res) => {
